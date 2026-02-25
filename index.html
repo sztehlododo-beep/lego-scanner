@@ -132,9 +132,42 @@
     // A mappák nevei a Drive-ról (ABC sorrendben!)
     const LABELS = ["4121715", "4142865", "4211622", "4514553", "6056664", "6057450", "6057470"];
 
+
     async function init() {
-        const loadText = document.getElementById('load-text');
-        try {
+    const loadText = document.getElementById('load-text');
+    try {
+        console.log("Modell betöltése indul...");
+        // Próbáljuk meg abszolút elérési úttal
+        model = await tf.loadLayersModel('modell.json');
+        console.log("Modell betöltve!");
+
+        loadText.innerText = "Kamera engedélyezése...";
+
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { 
+                facingMode: "environment",
+                width: { ideal: 640 },
+                height: { ideal: 480 }
+            }, 
+            audio: false 
+        });
+        
+        const video = document.getElementById('camera');
+        video.srcObject = stream;
+
+        // Megvárjuk, amíg a videó tényleg elindul
+        video.onloadedmetadata = () => {
+            console.log("Kamera elindult!");
+            document.getElementById('loader').style.display = 'none';
+            detect();
+        };
+
+    } catch (e) {
+        console.error("Hiba történt:", e);
+        loadText.innerHTML = "<span style='color:red'>HIBA:<br>" + e.message + "</span>";
+    }
+    }
+    
             // A fájlneved "modell.json" a GitHubon, ezt töltjük be
             // A 'strict: false' segít a Keras 3 -> TFJS konverziós hibákon
             model = await tf.loadLayersModel('./modell.json', { strict: false });
@@ -184,3 +217,4 @@
 
         prediction.dispose();
         // Folyamatos fut
+
