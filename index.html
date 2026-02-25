@@ -3,84 +3,113 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LEGO 42022 AI Scanner</title>
+    <title>LEGO 42022 AI Szkenner</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <style>
-        body { margin: 0; background: #121212; color: white; font-family: sans-serif; text-align: center; overflow: hidden; }
+        body { margin: 0; background: #121212; color: white; font-family: 'Segoe UI', sans-serif; text-align: center; overflow: hidden; }
         #video { width: 100vw; height: 100vh; object-fit: cover; }
-        .ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
-        .header { background: rgba(0,0,0,0.6); padding: 20px; border-bottom: 2px solid #f2cf11; }
-        .result-box { background: rgba(242, 207, 17, 0.9); color: black; padding: 20px; margin: 20px; border-radius: 15px; font-size: 24px; font-weight: bold; }
-        .loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 20px; }
+        .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
+        .header { background: rgba(0,0,0,0.8); padding: 15px; border-bottom: 3px solid #f2cf11; }
+        .result-card { background: #f2cf11; color: #000; padding: 20px; margin: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        .part-name { font-size: 28px; font-weight: bold; margin: 0; }
+        .part-id { font-size: 18px; opacity: 0.8; }
+        .confidence { font-size: 14px; margin-top: 5px; font-style: italic; }
+        .loading-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #121212; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 9999; }
+        .spinner { width: 50px; height: 50px; border: 5px solid #333; border-top: 5px solid #f2cf11; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
 
-<div id="loading" class="loading">AI agy betöltése...</div>
-<video id="video" autoplay playsinline></video>
+<div id="loading" class="loading-screen">
+    <div class="spinner"></div>
+    <p>LEGO AI agy betöltése...</p>
+</div>
 
-<div class="ui-layer">
+<video id="video" autoplay playsinline muted></video>
+
+<div class="overlay">
     <div class="header">
-        <h2>LEGO 42022 Scanner</h2>
-        <div id="status">Keresés...</div>
+        <h2 style="margin:0;">LEGO Hot Rod Scanner</h2>
+        <div id="status" style="font-size: 14px; color: #aaa;">Keresés folyamatban...</div>
     </div>
-    <div id="result" class="result-box" style="display: none;">
-        Alkatrész: <span id="part-id">---</span>
+    
+    <div id="result" class="result-card" style="display: none;">
+        <p class="part-id" id="display-id">ID: ---</p>
+        <p class="part-name" id="display-name">Alkatrész felismerve</p>
+        <div class="confidence" id="display-conf">Pontosság: 0%</div>
     </div>
 </div>
 
 <script>
     let model;
-    const video = document.getElementById('video');
-    const resultBox = document.getElementById('result');
-    const partIdText = document.getElementById('part-id');
+    // Ezt a listát a Colab-os 'train_gen.class_indices' alapján kell frissíteni!
+    // Példa sorrend a 42022-höz:
+    const labels = [
+        "4121715 - Friction Pin",
+        "4142865 - Axle 2L Black",
+        "4211622 - Bush 1/2 Grey",
+        "4514553 - Engine Piston",
+        "6057450 - Beam 3x7 Blue",
+        "4184286 - Tyre Normal",
+        "6056664 - Beam 3x5 Black",
+        "6057470 - Panel 5x11 Left",
+        "6057473 - Panel 5x11 Right"
+    ];
 
-    async function setupApp() {
-        // 1. Modell betöltése (a HTML mellett kell lenniük a fájloknak)
+    const video = document.getElementById('video');
+
+    async function init() {
         try {
+            // Modell betöltése
             model = await tf.loadLayersModel('./model.json');
             document.getElementById('loading').style.display = 'none';
-        } catch (e) {
-            document.getElementById('loading').innerText = "Hiba a modell betöltésekor!";
-            return;
+
+            // Kamera indítása
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment" }, 
+                audio: false 
+            });
+            video.srcObject = stream;
+            
+            predict();
+        } catch (err) {
+            document.getElementById('loading').innerHTML = "Hiba: " + err.message;
         }
-
-        // 2. Kamera indítása
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { facingMode: "environment" }, 
-            audio: false 
-        });
-        video.srcObject = stream;
-
-        predict();
     }
 
     async function predict() {
-        // Kép előkészítése az AI-nak (224x224 pixel)
-        const img = tf.browser.fromPixels(video)
-            .resizeNearestNeighbor([224, 224])
-            .toFloat()
-            .div(tf.scalar(255))
-            .expandDims();
-
-        const prediction = await model.predict(img);
-        const data = await prediction.data();
+        const tfImg = tf.browser.fromPixels(video);
+        const smImg = tf.image.resizeBilinear(tfImg, [224, 224]);
+        const normalized = smImg.div(255.0).expandDims(0);
         
-        // Legjobb találat kiválasztása
-        const maxIndex = data.indexOf(Math.max(...data));
-        const confidence = data[maxIndex];
+        const prediction = await model.predict(normalized);
+        const pIndex = prediction.argMax(1).dataSync()[0];
+        const pConf = prediction.dataSync()[pIndex];
 
-        // Ha 80% feletti a biztonság, kiírjuk (Itt a sorrend a mappák nevei alapján van!)
-        // Megjegyzés: A pontos neveket a 'train_gen.class_indices' alapján tudod megadni
-        if (confidence > 0.8) {
-            resultBox.style.display = 'block';
-            partIdText.innerText = "Kód: " + maxIndex; // Itt majd finomítjuk a neveket
+        // Ha 85% felett van a felismerés
+        if (pConf > 0.85) {
+            document.getElementById('result').style.display = 'block';
+            const fullLabel = labels[pIndex] || "Ismeretlen elem (" + pIndex + ")";
+            const parts = fullLabel.split(" - ");
+            
+            document.getElementById('display-id').innerText = "Kód: " + parts[0];
+            document.getElementById('display-name').innerText = parts[1] || "";
+            document.getElementById('display-conf').innerText = "Pontosság: " + Math.round(pConf * 100) + "%";
+        } else {
+            document.getElementById('result').style.display = 'none';
         }
+
+        // Memória tisztítás
+        tfImg.dispose();
+        smImg.dispose();
+        normalized.dispose();
+        prediction.dispose();
 
         requestAnimationFrame(predict);
     }
 
-    setupApp();
+    init();
 </script>
 </body>
 </html>
