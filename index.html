@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LEGO 42022 AI Scanner</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <style>
+        body { margin: 0; background: #121212; color: white; font-family: sans-serif; text-align: center; overflow: hidden; }
+        #video { width: 100vw; height: 100vh; object-fit: cover; }
+        .ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
+        .header { background: rgba(0,0,0,0.6); padding: 20px; border-bottom: 2px solid #f2cf11; }
+        .result-box { background: rgba(242, 207, 17, 0.9); color: black; padding: 20px; margin: 20px; border-radius: 15px; font-size: 24px; font-weight: bold; }
+        .loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 20px; }
+    </style>
+</head>
+<body>
+
+<div id="loading" class="loading">AI agy betöltése...</div>
+<video id="video" autoplay playsinline></video>
+
+<div class="ui-layer">
+    <div class="header">
+        <h2>LEGO 42022 Scanner</h2>
+        <div id="status">Keresés...</div>
+    </div>
+    <div id="result" class="result-box" style="display: none;">
+        Alkatrész: <span id="part-id">---</span>
+    </div>
+</div>
+
+<script>
+    let model;
+    const video = document.getElementById('video');
+    const resultBox = document.getElementById('result');
+    const partIdText = document.getElementById('part-id');
+
+    async function setupApp() {
+        // 1. Modell betöltése (a HTML mellett kell lenniük a fájloknak)
+        try {
+            model = await tf.loadLayersModel('./model.json');
+            document.getElementById('loading').style.display = 'none';
+        } catch (e) {
+            document.getElementById('loading').innerText = "Hiba a modell betöltésekor!";
+            return;
+        }
+
+        // 2. Kamera indítása
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: "environment" }, 
+            audio: false 
+        });
+        video.srcObject = stream;
+
+        predict();
+    }
+
+    async function predict() {
+        // Kép előkészítése az AI-nak (224x224 pixel)
+        const img = tf.browser.fromPixels(video)
+            .resizeNearestNeighbor([224, 224])
+            .toFloat()
+            .div(tf.scalar(255))
+            .expandDims();
+
+        const prediction = await model.predict(img);
+        const data = await prediction.data();
+        
+        // Legjobb találat kiválasztása
+        const maxIndex = data.indexOf(Math.max(...data));
+        const confidence = data[maxIndex];
+
+        // Ha 80% feletti a biztonság, kiírjuk (Itt a sorrend a mappák nevei alapján van!)
+        // Megjegyzés: A pontos neveket a 'train_gen.class_indices' alapján tudod megadni
+        if (confidence > 0.8) {
+            resultBox.style.display = 'block';
+            partIdText.innerText = "Kód: " + maxIndex; // Itt majd finomítjuk a neveket
+        }
+
+        requestAnimationFrame(predict);
+    }
+
+    setupApp();
+</script>
+</body>
+</html>
